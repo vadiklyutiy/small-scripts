@@ -114,27 +114,28 @@ __device__ float thread_max_vec(BFLOAT16 const* __restrict__ input,
 }
 
 
+template<bool inverse>
 __global__ void dynamic_per_token_scaled_fp8_quant_kernel(
     FP8_TYPE* __restrict__ out, 
     float* __restrict__ scale,
     BFLOAT16 const* __restrict__ input, 
     float const* __restrict__ scale_ub,
-    const int hidden_size) 
+    const int hidden_size)
 {
-    float const min_scaling_factor = 1.0f / (FP8_E4M3_MAX * 512.f);
+    float const min_scaling_factor = inverse ? (FP8_E4M3_MAX * 512.f) : (1.0f / (FP8_E4M3_MAX * 512.f));
 
     int const tid = threadIdx.x;
     int const token_idx = blockIdx.x;
-  
+
     // Use int64 to avoid overflowing an int32 when calculating this offset
     int64_t offset = static_cast<int64_t>(token_idx) * hidden_size;
     BFLOAT16 const* __restrict__ token_input = &input[offset];
     FP8_TYPE* __restrict__ token_output = &out[offset];
-  
+
     // For vectorization, token_input and token_output pointers need to be
     // aligned at 8-byte and 4-byte addresses respectively.
     bool const can_vectorize = hidden_size % 4 == 0;
-  
+
     float absmax_val = 0.0f;
     if (can_vectorize) {
       absmax_val = thread_max_vec(token_input, hidden_size, tid, blockDim.x);
@@ -151,37 +152,42 @@ __global__ void dynamic_per_token_scaled_fp8_quant_kernel(
         BlockReduce(reduceStorage).Reduce(absmax_val, cub::Max{}, blockDim.x);
     __shared__ float token_scale;
     if (tid == 0) {
-      if (scale_ub) {
+        if (scale_ub) {
         token_scale = min(block_absmax_val_maybe, *scale_ub);
-      } else {
+        } else {
         token_scale = block_absmax_val_maybe;
-      }
+        }
+        if (inverse) {
+          token_scale = min(FP8_E4M3_MAX / token_scale, min_scaling_factor);
+        } else {
+          token_scale = max(token_scale / FP8_E4M3_MAX, min_scaling_factor);
+        }
       // token scale computation
       // token_scale = max(token_scale / FP8_E4M3_MAX, min_scaling_factor);
-      token_scale = max( FP8_E4M3_MAX / token_scale, 1.0f / min_scaling_factor);
-      scale[token_idx] = token_scale;
+      // token_scale = max( FP8_E4M3_MAX / token_scale, 1.0f / min_scaling_factor);
+        scale[token_idx] = token_scale;
     }
     __syncthreads();
-  
+
     // Note that we don't use inverted scales so we can match FBGemm impl.
     if (can_vectorize) {
-      scaled_fp8_conversion_vec<BFLOAT16, true>(
+        scaled_fp8_conversion_vec<BFLOAT16, inverse>(
           token_output, token_input, token_scale, hidden_size, tid, blockDim.x);
     } else {
       for (int i = tid; i < hidden_size; i += blockDim.x) {
-        token_output[i] = scaled_fp8_conversion<true>(
+        token_output[i] = scaled_fp8_conversion<inverse>(
             static_cast<float>(token_input[i]), token_scale);
       }
     }
 }
 
 
-
 void scale_ref(
     torch::Tensor& out,         
     torch::Tensor& scales,
     torch::Tensor const& input,
-    int block_size) 
+    int block_size,
+    bool inverse = false) 
 {
   TORCH_CHECK(input.is_contiguous());
   TORCH_CHECK(out.is_contiguous());
@@ -194,11 +200,142 @@ void scale_ref(
   const at::cuda::OptionalCUDAGuard device_guard(device_of(input));
   const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
   
-  dynamic_per_token_scaled_fp8_quant_kernel<<<grid, block, 0, stream>>>(
-        out.data_ptr<FP8_TYPE>(), 
-        scales.data_ptr<float>(),
-        input.data_ptr<BFLOAT16>(),
-        nullptr,
-        hidden_size);
+    if (inverse) {
+        dynamic_per_token_scaled_fp8_quant_kernel<true><<<grid, block, 0, stream>>>(
+            out.data_ptr<FP8_TYPE>(), 
+            scales.data_ptr<float>(),
+            input.data_ptr<BFLOAT16>(),
+            nullptr,
+            hidden_size);
+    } else {
+        dynamic_per_token_scaled_fp8_quant_kernel<false><<<grid, block, 0, stream>>>(
+            out.data_ptr<FP8_TYPE>(), 
+            scales.data_ptr<float>(),
+            input.data_ptr<BFLOAT16>(),
+            nullptr,
+            hidden_size);
+    }
+
+}
+
+//=======================================================
+
+template<bool inverse>
+__global__ void dynamic_per_token_scaled_fp8_quant_by_warp_kernel(
+    FP8_TYPE* __restrict__ out, 
+    float* __restrict__ scale,
+    BFLOAT16 const* __restrict__ input, 
+    float const* __restrict__ scale_ub,
+    const int hidden_size)
+{
+    float const min_scaling_factor = inverse ? (FP8_E4M3_MAX * 512.f) : (1.0f / (FP8_E4M3_MAX * 512.f));
+    
+    int const tid = threadIdx.x;
+    int const lane_id = tid % warpSize;
+    int const token_per_block = blockDim.x / warpSize;
+    int const token_idx = token_per_block*blockIdx.x + tid / warpSize;
+
+    // Use int64 to avoid overflowing an int32 when calculating this offset
+    int64_t offset = static_cast<int64_t>(token_idx) * hidden_size;
+    BFLOAT16 const* __restrict__ token_input = &input[offset];
+    FP8_TYPE* __restrict__ token_output = &out[offset];
+
+    // For vectorization, token_input and token_output pointers need to be
+    // aligned at 8-byte and 4-byte addresses respectively.
+    bool const can_vectorize = hidden_size % 4 == 0;
+
+    float absmax_val = 0.0f;
+    if (can_vectorize) {
+      absmax_val = thread_max_vec(token_input, hidden_size, lane_id, warpSize);
+    } else {
+      assert(false);
+      for (int i = tid; i < hidden_size; i += blockDim.x) {
+        float const x = static_cast<float>(token_input[i]);
+        absmax_val = max(absmax_val, fabs(x));
+      }
+    }
+
+    // Warp reduction for max - manually unrolled
+    float warp_max = absmax_val;
+    warp_max = max(warp_max, __shfl_down_sync(0xffffffff, warp_max, 16));
+    warp_max = max(warp_max, __shfl_down_sync(0xffffffff, warp_max, 8));
+    warp_max = max(warp_max, __shfl_down_sync(0xffffffff, warp_max, 4));
+    warp_max = max(warp_max, __shfl_down_sync(0xffffffff, warp_max, 2));
+    warp_max = max(warp_max, __shfl_down_sync(0xffffffff, warp_max, 1));
+  
+    // Use warp-local scale instead of shared memory
+    float token_scale; 
+  
+    if (lane_id == 0) {
+      if (scale_ub) {
+        token_scale = min(warp_max, *scale_ub);
+      } else {
+        token_scale = warp_max;
+      }
+      if (inverse)
+      {
+        token_scale = min(FP8_E4M3_MAX / token_scale, min_scaling_factor);
+      } else 
+      {
+        token_scale = max(token_scale / FP8_E4M3_MAX, min_scaling_factor);
+      }
+      // token_scale = max(token_scale / FP8_E4M3_MAX, min_scaling_factor);
+      // token_scale = min(FP8_E4M3_MAX / token_scale, 1.0f / min_scaling_factor);
+      scale[token_idx] = token_scale;
+    }
+    token_scale = __shfl_sync(0xffffffff, token_scale, 0);  // broadcast final scale to warp
+
+    // Note that we don't use inverted scales so we can match FBGemm impl.
+    if (can_vectorize) {
+      scaled_fp8_conversion_vec<BFLOAT16, inverse>(
+          token_output, token_input, token_scale, hidden_size, lane_id, warpSize);
+    } else {
+      assert(false);
+      for (int i = tid; i < hidden_size; i += blockDim.x) {
+        token_output[i] = scaled_fp8_conversion<inverse>(
+            static_cast<float>(token_input[i]), token_scale);
+      }
+    }
+}
+
+
+void scale_new(
+  torch::Tensor& out,         
+  torch::Tensor& scales,
+  torch::Tensor const& input,
+  int block_size,
+  bool inverse = false) 
+{
+  TORCH_CHECK(input.is_contiguous());
+  TORCH_CHECK(out.is_contiguous());
+
+  int const hidden_size = input.size(-1);
+  int const num_tokens = input.numel() / hidden_size;
+  assert(block_size % 32 == 0);
+  int const warp_per_block = block_size / 32;
+  assert(num_tokens % warp_per_block == 0);
+  int const grid_size = num_tokens / warp_per_block;
+
+  dim3 const grid(grid_size);
+  dim3 const block(std::min(hidden_size, block_size));
+
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(input));
+  const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+
+  if (inverse) {
+      dynamic_per_token_scaled_fp8_quant_by_warp_kernel<true><<<grid, block, 0, stream>>>(
+          out.data_ptr<FP8_TYPE>(), 
+          scales.data_ptr<float>(),
+          input.data_ptr<BFLOAT16>(),
+          nullptr,
+          hidden_size);
+  } else {
+      dynamic_per_token_scaled_fp8_quant_by_warp_kernel<false><<<grid, block, 0, stream>>>(
+          out.data_ptr<FP8_TYPE>(), 
+          scales.data_ptr<float>(),
+          input.data_ptr<BFLOAT16>(),
+          nullptr,
+          hidden_size);
+  }
 
 }

@@ -1,35 +1,53 @@
 import os
-import ctypes
 import torch
 from torch.utils.cpp_extension import load
 from hidet.testing.torch_utils import bench_model
 
 os.environ['TORCH_CUDA_ARCH_LIST'] = '9.0'
 
-
 # Load the extension
 ops = load(
     name="scale_ops",
     sources=["./scale_ops.cpp", "./scale_ops.cu"],
     extra_cflags=['-O3'],
-    extra_cuda_cflags=['-O3'],
+    extra_cuda_cflags=['-O3', '-prec-div=false', '-ftz=true'],
     build_directory="build",
     verbose=True
 )
 
+
+def test_correctness(fn, x, block_size, inverse):
+    fn_ref = ops.scale_ref
+    out_ref = torch.empty(x.shape, device='cuda', dtype=torch.float8_e4m3fn)
+    scales_ref = torch.empty((x.shape[0]), device='cuda', dtype=torch.float32)                 
+    fn_ref(out_ref, scales_ref, x, 1024, False)
+    
+    out = torch.empty(x.shape, device='cuda', dtype=torch.float8_e4m3fn)
+    scales = torch.empty((x.shape[0]), device='cuda', dtype=torch.float32)
+    fn(out, scales, x, block_size, inverse)
+
+    if inverse:
+        scales = scales.reciprocal()
+    
+    assert torch.allclose(scales.to(dtype=torch.bfloat16), scales_ref.to(dtype=torch.bfloat16), atol=0.125, rtol=0.125), f"scales: {scales} scales_ref: {scales_ref}"
+    assert torch.allclose(out.to(dtype=torch.bfloat16), out_ref.to(dtype=torch.bfloat16), atol=0.125, rtol=0.125), f"out: {out} out_ref: {out_ref}"
+
+
 def test_block_size(fn, args):
     for block_size in [32, 64, 128, 256, 512, 1024]:
-        new_args = args + [block_size]
-        latency = bench_model(fn, new_args)
-        print(f"block_size {block_size}: {latency:.6f}")
+        for inverse in [False, True]:
+            test_correctness(fn, args[-1], block_size, inverse)
+            new_args = args + [block_size] + [inverse]
+            latency = bench_model(fn, new_args)
+            print(f"block_size {block_size} inverse {inverse}: {latency:.6f}")
 
 
 def test_shape(fn, shape):
     x = torch.randn(shape, dtype=torch.bfloat16, device='cuda')
-    out = torch.empty(x.shape, device='cuda', dtype=torch.torch.float8_e4m3fn)
+    out = torch.empty(x.shape, device='cuda', dtype=torch.float8_e4m3fn)
     scales = torch.empty((x.shape[0]), device='cuda', dtype=torch.float32) 
-    test_block_size(fn, [out, scales, x])
 
+    test_block_size(fn, [out, scales, x])
 
 
 @torch.inference_mode()
@@ -46,11 +64,15 @@ def main():
               (2048*61,5120),(2048*62,5120),(2048*63,5120),(2048*64,5120),(2048*65,5120),(2048*66,5120),(2048*67,5120),(2048*68,5120),(2048*69,5120),(2048*70,5120),
               (2048*71,5120),(2048*72,5120)]"
     """
+    #SHAPES = [(20736, 256*i) for i in range(4, 32)]
+    #SHAPES = [(20736, 5120)]
+
     for shape in SHAPES:
-        print(f"TEST SHAPE: {shape}")
-        test_shape(ops.scale_ref, shape)   
-
-
+        print(f"TEST SHAPE: {shape}. SIZE: {2*shape[0]*shape[1]/1024/1024} MB")
+        print("TESTING REDUCE BY BLOCK")
+        test_shape(ops.scale_ref, shape)
+        print("TESTING REDUCE BY WARP")
+        test_shape(ops.scale_new, shape)   
 
 
 if __name__ == "__main__":
