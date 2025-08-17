@@ -1,0 +1,8 @@
+/home/vadim/small-scripts/cuda-gemm/tma-gemm/build/CMakeFiles/edit_cache.dir
+/home/vadim/small-scripts/cuda-gemm/tma-gemm/build/CMakeFiles/rebuild_cache.dir
+/home/vadim/small-scripts/cuda-gemm/tma-gemm/build/src/CMakeFiles/cuda_tma_gemm.dir
+/home/vadim/small-scripts/cuda-gemm/tma-gemm/build/src/CMakeFiles/edit_cache.dir
+/home/vadim/small-scripts/cuda-gemm/tma-gemm/build/src/CMakeFiles/rebuild_cache.dir
+/home/vadim/small-scripts/cuda-gemm/tma-gemm/build/tests/CMakeFiles/test_tma_gemm.dir
+/home/vadim/small-scripts/cuda-gemm/tma-gemm/build/tests/CMakeFiles/edit_cache.dir
+/home/vadim/small-scripts/cuda-gemm/tma-gemm/build/tests/CMakeFiles/rebuild_cache.dir

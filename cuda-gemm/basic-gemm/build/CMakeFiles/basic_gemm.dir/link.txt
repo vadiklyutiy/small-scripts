@@ -1,0 +1,1 @@
+/usr/bin/g++ -fPIC -shared -Wl,-soname,libbasic_gemm.so -o libbasic_gemm.so @CMakeFiles/basic_gemm.dir/objects1.rsp CMakeFiles/basic_gemm.dir/cmake_device_link.o @CMakeFiles/basic_gemm.dir/linkLibs.rsp -L"/usr/local/cuda-12.8/targets/x86_64-linux/lib/stubs" -L"/usr/local/cuda-12.8/targets/x86_64-linux/lib"

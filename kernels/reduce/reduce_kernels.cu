@@ -49,8 +49,8 @@ __global__ void reduce_mean_32_separate(float* input, float* output, int width) 
     
     // Each thread loads 64 elements (2048/32 = 64)
     float rv = 0.0f;
-    for (int i = 0; i < 64; i++) {
-        int idx = tid + i * 32;
+    {
+        int idx = tid ;
         if (idx < width) {
             rv += input[row * width + idx];
         }

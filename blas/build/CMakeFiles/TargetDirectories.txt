@@ -1,0 +1,5 @@
+/home/vadim/small-scripts/blas/build/CMakeFiles/matrix_mul.dir
+/home/vadim/small-scripts/blas/build/CMakeFiles/matrix_mul_test.dir
+/home/vadim/small-scripts/blas/build/CMakeFiles/matrix_mul_benchmark.dir
+/home/vadim/small-scripts/blas/build/CMakeFiles/edit_cache.dir
+/home/vadim/small-scripts/blas/build/CMakeFiles/rebuild_cache.dir

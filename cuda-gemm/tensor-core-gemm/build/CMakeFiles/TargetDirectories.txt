@@ -1,0 +1,8 @@
+/home/vadim/small-scripts/cuda-gemm/tensor-core-gemm/build/CMakeFiles/tensor_core_gemm.dir
+/home/vadim/small-scripts/cuda-gemm/tensor-core-gemm/build/CMakeFiles/test_tensor_core_gemm.dir
+/home/vadim/small-scripts/cuda-gemm/tensor-core-gemm/build/CMakeFiles/edit_cache.dir
+/home/vadim/small-scripts/cuda-gemm/tensor-core-gemm/build/CMakeFiles/rebuild_cache.dir
+/home/vadim/small-scripts/cuda-gemm/tensor-core-gemm/build/CMakeFiles/list_install_components.dir
+/home/vadim/small-scripts/cuda-gemm/tensor-core-gemm/build/CMakeFiles/install.dir
+/home/vadim/small-scripts/cuda-gemm/tensor-core-gemm/build/CMakeFiles/install/local.dir
+/home/vadim/small-scripts/cuda-gemm/tensor-core-gemm/build/CMakeFiles/install/strip.dir

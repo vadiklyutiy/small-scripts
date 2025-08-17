@@ -1,0 +1,2 @@
+/usr/bin/ar qc libmatrix_mul.a CMakeFiles/matrix_mul.dir/src/matrix_mul.cu.o
+/usr/bin/ranlib libmatrix_mul.a
