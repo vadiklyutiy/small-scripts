@@ -1,17 +1,17 @@
 #!/bin/bash
 
-MODEL="Qwen/Qwen3-Next-80B-A3B-Instruct-FP8"
-TP=2
-LOG_FILE="vllm_server-fp8.log"
+MODEL="nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4"
+TP=4
+LOG_FILE="vllm_server-fp4.log"
 SERVER_PID=""
 
 # Function to start vLLM server
 start_server() {
     echo "Starting vLLM server..."
-    echo "Command: VLLM_USE_FLASHINFER_MOE_FP8=1 vllm serve $MODEL -tp $TP --enable-expert-parallel --async-scheduling --no-enable-prefix-caching --compilation_config.max_cudagraph_capture_size 2048"
+    echo "Command: VLLM_USE_FLASHINFER_MOE_FP4=1 vllm serve $MODEL -tp $TP --enable-expert-parallel --async-scheduling --no-enable-prefix-caching --compilation_config.max_cudagraph_capture_size 2048"
     echo ""
     
-    VLLM_USE_FLASHINFER_MOE_FP8=1 VLLM_USE_DEEP_GEMM=0 vllm serve $MODEL \
+    VLLM_USE_FLASHINFER_MOE_FP4=1 VLLM_USE_DEEP_GEMM=0 vllm serve $MODEL \
         -tp $TP \
         --enable-expert-parallel \
         --async-scheduling \
